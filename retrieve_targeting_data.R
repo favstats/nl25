@@ -9,6 +9,7 @@ library(httr)
 library(tidyverse)
 library(lubridate)
 library(httr2)
+library(glue)
 
 inspck <- installed.packages() %>% 
   as_tibble() %>% 
@@ -17,6 +18,8 @@ inspck <- installed.packages() %>%
 if(!("metatargetr" %in% inspck)){
   remotes::install_github('favstats/metatargetr')
 }
+
+source("https://raw.githubusercontent.com/favstats/metatargetr/refs/heads/master/R/get_ad_report.R")
 
 thecntry <- "NL"
 
@@ -100,8 +103,8 @@ get_page_insights <- function (pageid, timeframe = "LAST_30_DAYS", lang = "en-GB
   
   resp <- httr2::request("https://www.facebook.com/api/graphql/") %>% 
     httr2::req_headers(`Accept-Language` = paste0(lang, 
-                                                ",", stringr::str_split(lang, "-") %>% unlist() %>% 
-                                                  .[1], ";q=0.5"), `sec-fetch-site` = "same-origin", 
+                                                  ",", stringr::str_split(lang, "-") %>% unlist() %>% 
+                                                    .[1], ";q=0.5"), `sec-fetch-site` = "same-origin", 
                        `user-agent` = ua) %>%
     # httr2::req_proxy(
     #   url = get_proxy(prxs)[1],
@@ -126,7 +129,7 @@ get_page_insights <- function (pageid, timeframe = "LAST_30_DAYS", lang = "en-GB
         rvest::html_text() %>% str_split_1("(?<=\\})\\s*(?=\\{)") %>%
         map(jsonlite::fromJSON)
     }
-
+    
     
     
   }
@@ -235,11 +238,18 @@ get_page_insights <- function (pageid, timeframe = "LAST_30_DAYS", lang = "en-GB
 # library(metatargetr)
 
 if (Sys.info()[["effective_user"]] == "favstats" | Sys.info()[["effective_user"]] == "favoo") {
-### CHANGE ME WHEN LOCAL!
+  ### CHANGE ME WHEN LOCAL!
   tf <- "30"
 }
 
-jb <- get_page_insights("103875099042033", timeframe = glue::glue("LAST_90_DAYS"), include_info = "targeting_info") %>% as_tibble()
+if(thecntry == "NL"){
+  jb <- get_page_insights("288295911466", timeframe = glue::glue("LAST_90_DAYS"), include_info = "targeting_info") %>% as_tibble()
+  
+} else {
+  jb <- get_page_insights("103875099042033", timeframe = glue::glue("LAST_90_DAYS"), include_info = "targeting_info") %>% as_tibble()
+  
+}
+
 
 new_ds <- jb %>% arrange(ds) %>% slice(1) %>% pull(ds)
 
@@ -288,7 +298,8 @@ try({
   headers <- add_headers(
     accept = "application/json",
     `accept-language` = "en-US,en;q=0.9,de-DE;q=0.8,de;q=0.7,nl;q=0.6,it;q=0.5,sv;q=0.4,is;q=0.3",
-    authorization = paste("Bearer", token),
+    # authorization = paste("Bearer", token),
+    `x-access-token` = token ,
     `content-type` = "application/json",
     priority = "u=1, i",
     `sec-ch-ua` = '"Chromium";v="134", "Not:A-Brand";v="24", "Google Chrome";v="134"',
@@ -621,7 +632,7 @@ try({
       the_assets <-
         httr::GET(
           paste0(
-            "https://github.com/favstats/meta_ad_reports/releases/expanded_assets/",
+            "https://github.com/favstats/meta_ad_reports2/releases/expanded_assets/",
             .x
           )
         )
@@ -667,7 +678,7 @@ try({
   
   download.file(
     paste0(
-      "https://github.com/favstats/meta_ad_reports/releases/download/",
+      "https://github.com/favstats/meta_ad_reports2/releases/download/",
       thecntry,
       "-last_90_days/",
       latest$file_name
@@ -677,7 +688,8 @@ try({
   
   last7 <- readRDS("report.rds") %>%
     mutate(sources = "report") %>%
-    mutate(party = "unknown")
+    mutate(party = "unknown") %>% 
+    filter(page_id != "0")
   
   file.remove("report.rds")
 })
@@ -686,163 +698,76 @@ if (!exists("last7")) {
   last7 <- tibble()
 }
 
+safe_get_targeting_db <- function(country,
+                                  days      = 30,
+                                  ds_start  = Sys.Date(),   # e.g. new_ds
+                                  max_back  = 14) {         # stop after 14 failures
+  for (i in 0:max_back) {
+    ds_try <- ds_start - i
+    
+    out <- tryCatch(
+      metatargetr::get_targeting_db(country, days, ds_try),
+      error = function(e) {
+        # Only swallow “does not exist / 404” errors – everything else should still abort
+        if (grepl("(404 Not Found|cannot open URL)", e$message)) return(NULL)
+        stop(e)        # re-throw unknown errors
+      }
+    )
+    
+    if (!is.null(out)) {
+      message(sprintf("✓ Using dataset for %s", ds_try))
+      return(out)
+    }
+  }
+  
+  stop(sprintf(
+    "No dataset available between %s and %s",
+    ds_start, ds_start - max_back
+  ))
+}
 
-# last7 %>% 
-#   select(-party) %>% 
-#   left_join(wtm_data %>% select(-page_name)) %>% 
-#   mutate(amount_spent_ron = parse_number(amount_spent_ron)) %>% 
-#   arrange(desc(amount_spent_ron)) %>% 
-#   select(page_id, page_name, disclaimer, amount_spent_ron, party) %>% 
-#   mutate(cntry = thecntry) %>% 
-#   mutate(link_ad_library = glue::glue("https://www.facebook.com/ads/library/?active_status=all&ad_type=political_and_issue_ads&country={cntry}&is_targeted_country=false&media_type=all&search_type=page&sort_data[direction]=desc&sort_data[mode]=relevancy_monthly_grouped&view_all_page_id={page_id}")) %>% 
-#   mutate(link_fb_page = glue::glue("https://www.facebook.com/{page_id}")) %>% 
-#   select(-cntry) %>% 
-#   openxlsx::write.xlsx("romania.xlsx")
+
+da30 <- safe_get_targeting_db(thecntry, 30, as.Date(new_ds))
+da7 <- safe_get_targeting_db(thecntry, 7, as.Date(new_ds))
+
+pacman::p_load(cli, janitor, vroom)
+# thecntry <- "NO"
+# new_ds <- "2025-07-11"
+# last7 <- metatargetr::get_ad_report(country = thecntry, timeframe = "last_7_days", date = new_ds)
+# last30 <- metatargetr::get_ad_report(country = thecntry, timeframe = "last_30_days", date = new_ds)
+# # da30 <- da30 %>% bind_rows_chr(da30_2)
+# options(scipen = 999)
+# those_are_missing_30 <- setdiff(last30$page_id, da30$page_id)
+# those_are_missing_7 <- setdiff(last7$page_id, da7$page_id)
 # 
-# ggl_dat_crea <- vroom::vroom("data/google-political-ads-creative-stats.csv")
+# da30_3 <- those_are_missing_30 %>% 
+#   map_dfr(~{
+#     metatargetr::get_targeting(.x, "LAST_30_DAYS")
+#   }, .progress = T)
 # 
-# ggl_dat <- read_csv("data/google-political-ads-advertiser-weekly-spend.csv")
-# ggl_dat_crea %>% slice(1:10) %>% View()
-# 
-# 
-# ggl_dat_crea %>% 
-#   filter(str_detect(Regions, thecntry)) %>% 
-#   filter(Date_Range_Start >= as.Date("2024-11-01")) %>% 
-#   group_by(Advertiser_ID, Advertiser_Name) %>% 
-#   summarize(Spend_Range_Min_RON = sum(Spend_Range_Min_RON)) %>% 
-#   arrange(desc(Spend_Range_Min_RON)) %>% 
-#   mutate(cntry = thecntry) %>% 
-#   mutate(ggl_link = glue::glue("https://adstransparency.google.com/advertiser/{Advertiser_ID}?region={cntry}&topic=political&preset-date=Last+30+days")) %>% 
-#   select(-cntry) %>% 
-#   openxlsx::write.xlsx("ggl_romania.xlsx")
-#   
-# sc <- read_csv("data/PoliticalAds.csv")
-#   
-# sc %>% View()
+# da7_2 <- those_are_missing_7 %>% 
+#   map_dfr(~{
+#     metatargetr::get_targeting(.x, "LAST_7_DAYS")
+#   }, .progress = T)
 
-# 269089752708
-
-
-
-# the_data <- arrow::read_parquet(glue::glue("https://github.com/favstats/meta_ad_targeting/releases/download/DE-last_7_days/2024-11-27.parquet"))  %>%
-#   select(-page_name, -party, -remove_em)
-# 
-# the_data %>% #View()
-#   filter(page_id == "269089752708")
-
-
-# the_data <- arrow::read_parquet(glue::glue("https://github.com/favstats/meta_ad_targeting/releases/download/DE-last_7_days/2024-12-02.parquet"))  %>% 
-#   select(-page_name, -party, -remove_em) %>% 
-#   left_join(all_dat  ) %>% 
-#   mutate(tframe = parse_number(as.character("last_7_days"))) %>%
-#   mutate(total_spend_formatted = parse_number(as.character(total_spend_formatted)))
+bind_rows_chr <- function(...) {
+  dfs <- list(...)
+  if (length(dfs) == 1L && is.list(dfs[[1L]]) && !inherits(dfs[[1L]], "data.frame")) {
+    dfs <- dfs[[1L]]          # support a single list argument
+  }
+  
+  dfs_chr <- lapply(
+    dfs,
+    \(df) dplyr::mutate(across(everything(), as.character), .data = df)
+  )
+  
+  dplyr::bind_rows(dfs_chr)
+}
 # 
 # 
-# present_dat <- the_data %>% 
-#   drop_na(party) %>% 
-#   filter(is.na(no_data)) %>% 
-#   distinct(page_id, .keep_all = T)
-# 
-# last7 %>% 
-#   anti_join(present_dat %>% select(page_id)) %>% 
-#   slice(1) %>% 
-#   pull(page_id) %>%
-#   as_tibble()
-# # select(-page_name, -party, -remove_em)
-# 
-# get_page_insights("380605622501418", timeframe = "last_7_days", include_info = "targeting_info")  %>%
-#   # mutate(page_id = as.character(page_id)) %>% 
-#   left_join(all_dat) %>%
-#   mutate(tframe = parse_number(as.character("last_7_days"))) %>%
-#   mutate(total_spend_formatted = parse_number(as.character(total_spend_formatted)))
-
-
-
-
-# mark_list <- us_markers %>% 
-#   mutate(tframe = fct_relevel(tframe, c("last_7_days",
-#                                         "last_30_days"))) %>% 
-#   arrange(tframe) %>% 
-#   filter(str_detect(tframe, "90_days", negate =T)) %>% 
-#   # filter(str_detect(tframe, "30_days", negate =T)) %>% 
-#   
-#   # slice(1) %>%
-#   # sample_n(10) %>% 
-#   # mutate(ds = as.Date(ds)) %>% 
-#   split(1:nrow(.)) %>% 
-#   map(~{
-#     thetframe <- .x$tframe
-#     the_data <- arrow::read_parquet(glue::glue("https://github.com/favstats/meta_ad_targeting/releases/download/{thecntry}-{.x$tframe}/{.x$ds}.parquet"))  %>% 
-#       select(-page_name, -party, -remove_em) %>% 
-#       left_join(all_dat  ) %>% 
-#       mutate(tframe = parse_number(as.character(.x$tframe))) %>%
-#       mutate(total_spend_formatted = parse_number(as.character(total_spend_formatted)))
-#     
-#     the_data <- the_data %>% 
-#       filter(is.na(no_data))
-#     
-#     arethesepagespresent <<- the_data %>% 
-#       filter(page_id %in% unique(last7$page_id)[1:1000])
-#     
-#     # if(length(unique(arethesepagespresent$page_id))<1000){
-#     #   try({
-#     # 
-#     #     print("djt not found")
-#     #     djt_page <<- unique(last7$page_id) %>%
-#     #       setdiff(the_data$page_id) %>%
-#     #       # djt_page <<- "380605622501418" %>%
-#     #       map_dfr_progress(
-#     #         ~{get_page_insights(.x, timeframe = thetframe, include_info = "targeting_info")},
-#     #         .progress = T
-#     #       ) %>%
-#     #       as_tibble() %>%
-#     #       # select(-page_name, -party, -remove_em) %>%
-#     #       left_join(all_dat) %>%
-#     #       mutate(tframe = parse_number(as.character(.x$tframe))) %>%
-#     #       mutate(total_spend_formatted = parse_number(as.character(total_spend_formatted)))
-#     # 
-#     #     the_data <- djt_page %>%
-#     #       bind_rows(the_data)
-#     # 
-#     #     present_now <- the_data %>%
-#     #       inner_join(arethesepagespresent %>% select(page_id)) %>%
-#     #       distinct(page_id)
-#     # 
-#     #     print(nrow(present_now))
-#     #   })
-#     # }
-#     
-#     
-#     
-#     
-#     return(the_data)
-#   }) 
-
-# mark_list[[1]] %>% 
-#   filter(page_id == "380605622501418")
-# 
-# mark_list[[2]] %>% 
-#   filter(page_id == "380605622501418")
-# 
-# the_data %>% 
-#   filter(page_id == "380605622501418")
-
-# get_page_insights("153080620724", timeframe = "LAST_30_DAYS", include_info = "targeting_info") %>%
-#   as_tibble()
-# 
-# da7 <- mark_list[[1]]
-# da30 <- mark_list[[2]]
-# da90 <- mark_list[[3]]
-# 
-# da7 %>%  filter(page_id == "153080620724")
-da30 <- metatargetr::get_targeting_db(thecntry, 30, new_ds) 
-da7 <- metatargetr::get_targeting_db(thecntry, 7, new_ds) 
-
-# da30 %>% filter(page_id == "220942375077886")
-
-# saveRDS(da90, "data/election_dat90.rds")
-saveRDS(da30, "data/election_dat30.rds")
-saveRDS(da7, "data/election_dat7.rds")
+# # saveRDS(da90, "data/election_dat90.rds")
+# saveRDS(da30 %>% bind_rows_chr(da30_2), "data/election_dat30.rds")
+# saveRDS(da7  %>% bind_rows_chr(da7_2), "data/election_dat7.rds")
 
 # saveRDS(da90, paste0("historic/", new_ds, "/90.rds"))
 # saveRDS(da30, paste0("historic/", new_ds, "/30.rds"))
@@ -850,3 +775,82 @@ saveRDS(da7, "data/election_dat7.rds")
 
 # list(da7, da30, da90) %>%
 #   walk(combine_em)
+
+
+
+#' Retrieve a complete targeting DB – guarantees all IDs present
+#'
+#' @param country   ISO-2 country code, e.g. "NO".
+#' @param timeframe "last_7_days" or "last_30_days".
+#' @param ds_start  Reference date (as.Date or "YYYY-MM-DD").
+#' @param max_back  How many days to step back when the parquet is missing.
+#' @param max_rounds Quit after this many refill rounds (safety valve).
+#' @param pause     Seconds to wait between single-ID calls (API courtesy).
+#' @return Tibble containing *every* ID that appears in the ad-report.
+get_complete_targeting_db <- function(country,
+                                      timeframe  = c("last_7_days", "last_30_days"),
+                                      ds_start   = Sys.Date(),
+                                      max_back   = 14,
+                                      max_rounds = 5,
+                                      pause      = 0.3,
+                                      stop_on_incomplete = FALSE) {
+  
+  timeframe  <- match.arg(timeframe)
+  days       <- ifelse(timeframe == "last_7_days", 7, 30)
+  ds_start   <- as.Date(ds_start)
+  
+  db <- safe_get_targeting_db(country, days, ds_start, max_back = max_back)
+  # ad_report <- get_ad_report(country, timeframe, ds_start)
+  
+  round <- 1
+  prev_missing <- 0
+  repeat {
+    missing <- setdiff(last7$page_id, db$page_id)
+    if (length(missing) == 0) break
+    
+    if (round > max_rounds) {
+      msg <- glue::glue(
+        "Still {length(missing)} IDs missing after {max_rounds} rounds.")
+      if (stop_on_incomplete) {
+        cli::cli_abort(msg)
+      } else {
+        cli::cli_warn(msg)
+        attr(db, "missing_ids") <- missing   # save for later inspection
+        break
+      }
+    }
+    
+    cli::cli_alert_info("Round {round}: fetching {length(missing)} missing IDs …")
+    if(length(missing)!=prev_missing){
+      newly <- purrr::map_dfr(
+        missing,
+        \(id) {
+          Sys.sleep(pause)
+          tryCatch(
+            metatargetr::get_targeting(id, toupper(timeframe)),
+            error = \(e) NULL      # skip IDs that still fail
+          )
+        }
+      )      
+    } else {
+      return(db)
+    }
+    
+    
+    prev_missing <<- missing
+    db    <- bind_rows_chr(db, newly)
+    round <- round + 1
+  }
+  
+  db
+}
+
+
+# thecntry <- "NO"
+# new_ds   <- "2025-07-11"
+
+da7  <- get_complete_targeting_db(thecntry, "last_7_days",  new_ds)
+da30 <- get_complete_targeting_db(thecntry, "last_30_days", new_ds)
+
+saveRDS(da30, "data/election_dat30.rds")
+saveRDS(da7,  "data/election_dat7.rds")
