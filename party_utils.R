@@ -400,7 +400,15 @@ classified_advertisers <- all_dat  %>%
   distinct(page_id, .keep_all = T)
 
 color_dat <- classified_advertisers %>% distinct(classification, colo) %>% 
-  rename(party = classification, colors = colo)
+  rename(party = classification, colors = colo)  %>% 
+  mutate(party = case_when(
+    party == "Partij van de Arbeid" ~ "GL-PvdA",
+    party == "GroenLinks" ~ "GL-PvdA",
+    party == "PvdA" ~ "GL-PvdA",
+    party == "GL" ~ "GL-PvdA",
+    T ~ party
+  )) %>% 
+  distinct(party, .keep_all = T)
 
 # classified_advertisers <- readr::read_rds("https://github.com/favstats/wtm_au/raw/refs/heads/main/data/all_dat.rds") %>% 
 #   select(page_id, page_name, classification = party) %>%
@@ -423,9 +431,16 @@ election_dat30 <- readRDS("../data/election_dat30.rds")  %>%
   mutate(total_spend_formatted = readr::parse_number(as.character(total_spend_formatted))) %>% 
   mutate(total_num_ads = readr::parse_number(as.character(total_num_ads))) %>% 
   mutate(total_spend_pct = as.numeric(total_spend_pct))%>% 
-  mutate(num_ads = readr::parse_number(as.character(num_ads)))
+  mutate(num_ads = readr::parse_number(as.character(num_ads))) %>% 
+  mutate(party = case_when(
+    party == "Partij van de Arbeid" ~ "GL-PvdA",
+    party == "GroenLinks" ~ "GL-PvdA",
+    party == "PvdA" ~ "GL-PvdA",
+    party == "GL" ~ "GL-PvdA",
+    T ~ party
+  ))
 
-
+# election_dat30 %>% count(party, sort = T)
 # readRDS("data/election_dat30.rds")  %>%
 #   as_tibble() %>%
 #   select(-party) %>%
@@ -452,7 +467,14 @@ election_dat7 <- readRDS("../data/election_dat7.rds")  %>%
   mutate(total_spend_formatted = readr::parse_number(as.character(total_spend_formatted))) %>% 
   mutate(total_num_ads = readr::parse_number(as.character(total_num_ads))) %>% 
   mutate(total_spend_pct = as.numeric(total_spend_pct))%>% 
-  mutate(num_ads = readr::parse_number(as.character(num_ads)))
+  mutate(num_ads = readr::parse_number(as.character(num_ads))) %>% 
+  mutate(party = case_when(
+    party == "Partij van de Arbeid" ~ "GL-PvdA",
+    party == "GroenLinks" ~ "GL-PvdA",
+    party == "PvdA" ~ "GL-PvdA",
+    party == "GL" ~ "GL-PvdA",
+    T ~ party
+  ))
   
 
 
